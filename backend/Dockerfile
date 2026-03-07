@@ -23,7 +23,7 @@ RUN npx tsc --outDir dist || true
 # ── Production image ─────────────────────────────────────────────
 FROM base AS runner
 ENV NODE_ENV=production
-ENV PORT=3001
+ENV PORT=8080
 
 # Copy production node_modules
 COPY --from=deps /app/node_modules ./node_modules
@@ -33,7 +33,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src ./src
 COPY backend/package.json ./
 
-EXPOSE 3001
+EXPOSE 8080
 
 # EXA_API_KEY and other secrets injected at runtime via --env-file
 CMD ["node", "dist/index.js"]
