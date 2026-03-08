@@ -9,7 +9,10 @@ import * as topojson from 'topojson-client';
 import { motion, AnimatePresence } from 'motion/react';
 import { Plus, Minus, Maximize2 } from 'lucide-react';
 import { Destination } from '../data/destinations';
-import { AICursorSVG, NarrationBubble } from './AICursor';
+import { LocalPlace, LOCAL_PLACE_COLORS } from '../data/localPlaces';
+import { TripParams, AIResponse } from '../services/travelService';
+import { AvatarSVG, NarrationBubble } from './AICursor';
+import { AvatarChat } from './AvatarChat';
 
 type AppMode = 'explore' | 'build' | 'flight';
 
@@ -25,12 +28,23 @@ interface MapProps {
   destinations: Destination[];
   selectedIds: string[];
   suggestedIds: string[];
+  suggestedPrices: Record<string, number>;
+  selectedSuggestedId: string | null;
+  confirmedDestination: Destination | null;
+  localPlaces: LocalPlace[];
+  avatarDestination: Destination | null;
+  isAvatarChatOpen: boolean;
   focusedId: string | null;
   mode: AppMode;
   origin: string;
+  originCoords: [number, number];
+  tripParams: TripParams;
   aiCursor: AICursorState | null;
   onSkipTourStop: () => void;
+  onAvatarChatToggle: () => void;
   onSelectDestination: (dest: Destination) => void;
+  onSelectSuggestedNode: (dest: Destination) => void;
+  onAIResponse: (response: AIResponse) => void;
 }
 
 interface ZoomState {
@@ -75,16 +89,36 @@ const REGION_LABELS: Array<{ label: string; lon: number; lat: number }> = [
   { label: 'OCEANIA', lon: 145, lat: -30 },
 ];
 
+function arcMidpoint(
+  from: [number, number],
+  to: [number, number],
+  projection: d3.GeoProjection
+): [number, number] | null {
+  const interpolate = d3.geoInterpolate(from, to);
+  return projection(interpolate(0.5));
+}
+
 export const Map: React.FC<MapProps> = ({
   destinations,
   selectedIds,
   suggestedIds,
+  suggestedPrices,
+  selectedSuggestedId,
+  confirmedDestination,
+  localPlaces,
   focusedId,
   mode,
   origin,
+  originCoords,
+  avatarDestination,
+  isAvatarChatOpen,
+  tripParams,
   aiCursor,
   onSkipTourStop,
+  onAvatarChatToggle,
   onSelectDestination,
+  onSelectSuggestedNode,
+  onAIResponse,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
@@ -94,6 +128,7 @@ export const Map: React.FC<MapProps> = ({
   const [dims, setDims] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [zoom, setZoom] = useState<ZoomState>({ x: 0, y: 0, k: 1 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredSuggestedId, setHoveredSuggestedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -198,28 +233,80 @@ export const Map: React.FC<MapProps> = ({
 
   const flightArcs = useMemo(() => {
     if (mode !== 'flight') return [];
-    const originCoords: [number, number] = [-74.006, 40.7128]; // Default: New York
     return selectedDestinations.map((dest) => ({
       id: dest.id,
       path: greatCircleArc(originCoords, [dest.longitude, dest.latitude], projection),
     }));
-  }, [mode, selectedDestinations, projection]);
+  }, [mode, selectedDestinations, projection, originCoords]);
+
+  const suggestedDestinations = useMemo(
+    () =>
+      suggestedIds
+        .map((id) => destinations.find((d) => d.id === id))
+        .filter((d): d is Destination => !!d),
+    [suggestedIds, destinations]
+  );
+
+  // Hide route graph once user has confirmed a destination
+  const routeGraphActive = suggestedIds.length > 0 && !confirmedDestination;
+
+  // Deep zoom into confirmed destination (scale 7)
+  useEffect(() => {
+    if (!confirmedDestination || !svgRef.current || !zoomRef.current) return;
+    const pt = projection([confirmedDestination.longitude, confirmedDestination.latitude]);
+    if (!pt) return;
+    const scale = 7;
+    const tx = dims.w / 2 - pt[0] * scale;
+    const ty = dims.h / 2 - pt[1] * scale;
+    d3.select(svgRef.current)
+      .transition()
+      .duration(1200)
+      .ease(d3.easeCubicInOut)
+      .call(zoomRef.current.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmedDestination?.id]);
+
+  const handleSuggestedNodeClick = useCallback(
+    (dest: Destination) => {
+      if (svgRef.current && zoomRef.current) {
+        const pt = projection([dest.longitude, dest.latitude]);
+        if (pt) {
+          const scale = 4;
+          const tx = dims.w / 2 - pt[0] * scale;
+          const ty = dims.h / 2 - pt[1] * scale;
+          d3.select(svgRef.current)
+            .transition()
+            .duration(900)
+            .call(zoomRef.current.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+        }
+      }
+      onSelectSuggestedNode(dest);
+    },
+    [dims, projection, onSelectSuggestedNode]
+  );
 
   const k = zoom.k;
 
-  // AI cursor — project destination to SVG space and screen space
-  const cursorProjPos = useMemo(() => {
-    if (!aiCursor) return null;
-    return projection([aiCursor.destination.longitude, aiCursor.destination.latitude]);
-  }, [aiCursor?.destination.id, projection]);
+  // Avatar position — during tour use aiCursor.destination, else avatarDestination, else origin
+  const avatarActiveDest = aiCursor?.destination ?? avatarDestination ?? null;
 
-  const cursorScreenPos = useMemo(() => {
-    if (!cursorProjPos) return null;
+  const avatarProjPos = useMemo(() => {
+    if (avatarActiveDest) {
+      return projection([avatarActiveDest.longitude, avatarActiveDest.latitude]);
+    }
+    return projection(originCoords);
+  }, [avatarActiveDest?.id, originCoords, projection]);
+
+  const avatarScreenPos = useMemo(() => {
+    if (!avatarProjPos) return null;
     return {
-      x: cursorProjPos[0] * zoom.k + zoom.x,
-      y: cursorProjPos[1] * zoom.k + zoom.y,
+      x: avatarProjPos[0] * zoom.k + zoom.x,
+      y: avatarProjPos[1] * zoom.k + zoom.y,
     };
-  }, [cursorProjPos, zoom]);
+  }, [avatarProjPos, zoom]);
+
+  // Narration screen pos (same as avatar during tour)
+  const cursorScreenPos = avatarScreenPos;
 
   function markerFill(dest: Destination): string {
     if (selectedIds.includes(dest.id)) return '#C9A84C';
@@ -228,7 +315,7 @@ export const Map: React.FC<MapProps> = ({
   }
 
   return (
-    <div className="absolute inset-0 overflow-hidden" style={{ background: '#C8D8E4' }}>
+    <div className="absolute inset-0 overflow-hidden" style={{ background: '#F4E4BC' }}>
       <AnimatePresence>
         {isLoading && (
           <motion.div
@@ -236,7 +323,7 @@ export const Map: React.FC<MapProps> = ({
             initial={{ opacity: 1 }}
             exit={{ opacity: 0, transition: { duration: 0.8 } }}
             className="absolute inset-0 z-10 flex items-center justify-center"
-            style={{ background: '#C8D8E4' }}
+            style={{ background: '#F4E4BC' }}
           >
             <div className="text-center space-y-3">
               <div className="w-10 h-10 border-2 border-[#8B7B5C]/30 border-t-[#8B7B5C] animate-spin rounded-full mx-auto" />
@@ -256,28 +343,13 @@ export const Map: React.FC<MapProps> = ({
         style={{ display: 'block' }}
       >
         <defs>
-          <radialGradient id="ocean-grad" cx="50%" cy="50%" r="70%">
-            <stop offset="0%" stopColor="#D4E4EE" />
-            <stop offset="100%" stopColor="#B8CCDA" />
-          </radialGradient>
-          <linearGradient id="land-grad" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#EDE8DC" />
-            <stop offset="100%" stopColor="#E0D8C8" />
-          </linearGradient>
           <filter id="marker-shadow" x="-80%" y="-80%" width="260%" height="260%">
             <feDropShadow dx="0" dy="1" stdDeviation="2" floodColor="#1A1A1A" floodOpacity="0.3" />
           </filter>
-          <filter id="label-bg" x="-10%" y="-30%" width="120%" height="160%">
-            <feFlood floodColor="#F5F2ED" floodOpacity="0.85" result="bg" />
-            <feMerge>
-              <feMergeNode in="bg" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
 
-        {/* Ocean */}
-        <path d={sphere} fill="url(#ocean-grad)" />
+        {/* Ocean — same parchment as background */}
+        <path d={sphere} fill="#F4E4BC" />
 
         <g ref={gRef}>
           {/* Land */}
@@ -285,16 +357,16 @@ export const Map: React.FC<MapProps> = ({
             <path
               key={feature.id}
               d={pathGen(feature) ?? ''}
-              fill="url(#land-grad)"
+              fill="#E8D5A8"
               stroke="none"
             />
           ))}
 
           {/* Borders */}
-          <path d={borders} fill="none" stroke="#C4B89A" strokeWidth={0.6 / k} strokeOpacity={0.9} />
+          <path d={borders} fill="none" stroke="#2C2C2C" strokeWidth={0.5 / k} strokeOpacity={0.55} />
 
           {/* Graticule */}
-          <path d={graticule} fill="none" stroke="#B8CCDA" strokeWidth={0.35 / k} strokeOpacity={0.5} />
+          <path d={graticule} fill="none" stroke="#8B7455" strokeWidth={0.25 / k} strokeOpacity={0.18} />
 
           {/* Region labels */}
           {REGION_LABELS.map((r) => {
@@ -347,12 +419,177 @@ export const Map: React.FC<MapProps> = ({
             ) : null
           )}
 
-          {/* AI tour cursor — rendered on top of all map layers */}
-          {aiCursor && cursorProjPos && (
-            <AICursorSVG
-              projX={cursorProjPos[0]}
-              projY={cursorProjPos[1]}
+          {/* ── Route graph: origin → AI-suggested destinations ──────────── */}
+          {routeGraphActive && (() => {
+            const originPt = projection(originCoords);
+            return (
+              <>
+                {/* Arcs + price labels */}
+                {suggestedDestinations.map((dest) => {
+                  const isSelected = selectedSuggestedId === dest.id;
+                  const isOther = selectedSuggestedId !== null && !isSelected;
+                  const arcPath = greatCircleArc(originCoords, [dest.longitude, dest.latitude], projection);
+                  const midPt = arcMidpoint(originCoords, [dest.longitude, dest.latitude], projection);
+                  const price = suggestedPrices[dest.id];
+                  const isHov = hoveredSuggestedId === dest.id;
+
+                  return (
+                    <g key={`arc-${dest.id}`}>
+                      {arcPath && (
+                        <path
+                          d={arcPath}
+                          fill="none"
+                          stroke={isSelected ? '#C9A84C' : isHov ? '#2D7A5F' : '#2D7A5F'}
+                          strokeWidth={(isSelected || isHov ? 2 : 1.2) / k}
+                          strokeDasharray={isSelected ? undefined : `${5 / k} ${3 / k}`}
+                          strokeLinecap="round"
+                          opacity={isOther ? 0.18 : isSelected ? 0.95 : isHov ? 0.75 : 0.5}
+                          style={{ transition: 'opacity 0.35s, stroke-width 0.25s' }}
+                        />
+                      )}
+                      {midPt && price !== undefined && (
+                        <g
+                          transform={`translate(${midPt[0]}, ${midPt[1]})`}
+                          style={{ pointerEvents: 'none', opacity: isOther ? 0.2 : 1, transition: 'opacity 0.35s' }}
+                        >
+                          <rect
+                            x={-20 / k} y={-8 / k}
+                            width={40 / k} height={15 / k}
+                            rx={3 / k}
+                            fill="#F5F2ED"
+                            stroke={isSelected ? '#C9A84C' : '#2D7A5F'}
+                            strokeWidth={0.8 / k}
+                          />
+                          <text
+                            textAnchor="middle"
+                            y={4 / k}
+                            fill={isSelected ? '#C9A84C' : '#1A1A1A'}
+                            fontSize={7.5 / k}
+                            fontFamily="'JetBrains Mono', monospace"
+                            fontWeight="600"
+                          >
+                            ${price}
+                          </text>
+                        </g>
+                      )}
+                    </g>
+                  );
+                })}
+
+                {/* Origin node */}
+                {originPt && (
+                  <g transform={`translate(${originPt[0]}, ${originPt[1]})`} style={{ pointerEvents: 'none' }}>
+                    <circle r={16 / k} fill="none" stroke="#1A1A1A" strokeWidth={0.8 / k} opacity={0.12} />
+                    <circle r={10 / k} fill="#1A1A1A" />
+                    <circle r={4 / k} fill="#F5F2ED" />
+                    <text
+                      y={-(14 / k)}
+                      textAnchor="middle"
+                      fill="#1A1A1A"
+                      fontSize={7.5 / k}
+                      fontFamily="'JetBrains Mono', monospace"
+                      fontWeight="700"
+                      letterSpacing={1 / k}
+                    >
+                      {origin.toUpperCase()}
+                    </text>
+                  </g>
+                )}
+
+                {/* Destination route nodes */}
+                {suggestedDestinations.map((dest) => {
+                  const pt = project(dest);
+                  if (!pt) return null;
+                  const isSelected = selectedSuggestedId === dest.id;
+                  const isOther = selectedSuggestedId !== null && !isSelected;
+                  const isHov = hoveredSuggestedId === dest.id;
+
+                  return (
+                    <g
+                      key={`rnode-${dest.id}`}
+                      transform={`translate(${pt[0]}, ${pt[1]})`}
+                      style={{ cursor: 'pointer', opacity: isOther ? 0.3 : 1, transition: 'opacity 0.35s' }}
+                      onClick={() => handleSuggestedNodeClick(dest)}
+                      onMouseEnter={() => setHoveredSuggestedId(dest.id)}
+                      onMouseLeave={() => setHoveredSuggestedId(null)}
+                    >
+                      {/* Hover / selected ring */}
+                      {(isHov || isSelected) && (
+                        <circle
+                          r={13 / k}
+                          fill="none"
+                          stroke={isSelected ? '#C9A84C' : '#2D7A5F'}
+                          strokeWidth={1.2 / k}
+                          opacity={0.5}
+                        />
+                      )}
+                      <circle
+                        r={8 / k}
+                        fill={isSelected ? '#C9A84C' : '#2D7A5F'}
+                        stroke={isSelected ? '#8B6A30' : '#1D5C45'}
+                        strokeWidth={1.5 / k}
+                      />
+                      <circle r={3 / k} fill="#F5F2ED" style={{ pointerEvents: 'none' }} />
+                      <text
+                        y={-(12 / k)}
+                        textAnchor="middle"
+                        fill={isSelected ? '#C9A84C' : '#1A1A1A'}
+                        fontSize={9 / k}
+                        fontFamily="'JetBrains Mono', monospace"
+                        fontWeight={isSelected ? '700' : '500'}
+                        style={{ pointerEvents: 'none', userSelect: 'none' }}
+                      >
+                        {dest.name}
+                      </text>
+                    </g>
+                  );
+                })}
+              </>
+            );
+          })()}
+
+          {/* ── Local place markers (destination exploration mode) ───────── */}
+          {confirmedDestination && localPlaces.map((place) => {
+            const pt = projection([place.lng, place.lat]);
+            if (!pt) return null;
+            const color = LOCAL_PLACE_COLORS[place.type];
+            return (
+              <g
+                key={`local-${place.name}`}
+                transform={`translate(${pt[0]}, ${pt[1]})`}
+                style={{ pointerEvents: 'none' }}
+              >
+                {/* Glow ring */}
+                <circle r={9 / k} fill={color} opacity={0.15} />
+                {/* Main dot */}
+                <circle r={5 / k} fill={color} stroke="#F5F2ED" strokeWidth={1 / k} />
+                {/* Inner dot */}
+                <circle r={2 / k} fill="#F5F2ED" />
+                {/* Label */}
+                <text
+                  y={-(9 / k)}
+                  textAnchor="middle"
+                  fill="#1A1A1A"
+                  fontSize={8 / k}
+                  fontFamily="'JetBrains Mono', monospace"
+                  fontWeight="500"
+                  style={{ userSelect: 'none' }}
+                >
+                  {place.name}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Atlas avatar — always visible, moves to destinations */}
+          {avatarProjPos && (
+            <AvatarSVG
+              projX={avatarProjPos[0]}
+              projY={avatarProjPos[1]}
               k={k}
+              isNarrating={aiCursor?.isNarrating ?? false}
+              isChatOpen={isAvatarChatOpen}
+              onChatToggle={onAvatarChatToggle}
             />
           )}
 
@@ -437,7 +674,7 @@ export const Map: React.FC<MapProps> = ({
         </g>
       </svg>
 
-      {/* AI narration bubble — HTML overlay positioned in screen space */}
+      {/* AI narration bubble — shown during tour */}
       {aiCursor && cursorScreenPos && (
         <NarrationBubble
           narration={aiCursor.narration}
@@ -450,6 +687,22 @@ export const Map: React.FC<MapProps> = ({
           totalStops={aiCursor.totalStops}
           destinationName={aiCursor.destination.name}
           onSkip={onSkipTourStop}
+        />
+      )}
+
+      {/* Avatar contextual chat — anchored to avatar screen position */}
+      {avatarScreenPos && (
+        <AvatarChat
+          isOpen={isAvatarChatOpen}
+          onClose={onAvatarChatToggle}
+          screenX={avatarScreenPos.x}
+          screenY={avatarScreenPos.y}
+          screenW={dims.w}
+          screenH={dims.h}
+          currentDestination={avatarActiveDest}
+          originName={origin}
+          tripParams={tripParams}
+          onAIResponse={onAIResponse}
         />
       )}
 

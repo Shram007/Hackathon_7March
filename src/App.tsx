@@ -14,9 +14,46 @@ import { TravelControls } from './components/TravelControls';
 import { TripSummary } from './components/TripSummary';
 import { RecommendationPanel } from './components/RecommendationPanel';
 import { DetailPanel } from './components/DetailPanel';
+import { DestinationExplorePanel } from './components/DestinationExplorePanel';
 
 import { destinations, Destination } from './data/destinations';
+import { LOCAL_PLACES, LocalPlace } from './data/localPlaces';
 import { TripParams, AIResponse, TourStop } from './services/travelService';
+
+// City → coordinates lookup for origin node
+const CITY_COORDS: Record<string, [number, number]> = {
+  'new york': [-74.006, 40.7128],
+  'san francisco': [-122.4194, 37.7749],
+  'los angeles': [-118.2437, 34.0522],
+  'chicago': [-87.6298, 41.8781],
+  'miami': [-80.1918, 25.7617],
+  'seattle': [-122.3321, 47.6062],
+  'boston': [-71.0589, 42.3601],
+  'denver': [-104.9903, 39.7392],
+  'toronto': [-79.3832, 43.6532],
+  'london': [-0.1276, 51.5074],
+  'paris': [2.3522, 48.8566],
+  'amsterdam': [4.9041, 52.3676],
+  'berlin': [13.405, 52.52],
+  'madrid': [-3.7038, 40.4168],
+  'rome': [12.4964, 41.9028],
+  'dubai': [55.2708, 25.2048],
+  'singapore': [103.8198, 1.3521],
+  'tokyo': [139.6917, 35.6895],
+  'sydney': [151.2093, -33.8688],
+  'hong kong': [114.1694, 22.3193],
+  'mumbai': [72.8777, 19.076],
+  'delhi': [77.209, 28.6139],
+  'bangkok': [100.5018, 13.7563],
+};
+
+function getOriginCoords(origin: string): [number, number] {
+  const key = origin.toLowerCase().trim();
+  for (const [city, coords] of Object.entries(CITY_COORDS)) {
+    if (key.includes(city) || city.includes(key)) return coords;
+  }
+  return [-74.006, 40.7128]; // fallback: New York
+}
 
 type AppMode = 'explore' | 'build' | 'flight';
 
@@ -63,6 +100,8 @@ function ActionButton({ icon, label, active, badge, disabled, onClick }: ActionB
 export default function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [suggestedIds, setSuggestedIds] = useState<string[]>([]);
+  const [suggestedPrices, setSuggestedPrices] = useState<Record<string, number>>({});
+  const [selectedSuggestedId, setSelectedSuggestedId] = useState<string | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [tripParams, setTripParams] = useState<TripParams>(DEFAULT_PARAMS);
   const [mode, setMode] = useState<AppMode>('explore');
@@ -72,6 +111,16 @@ export default function App() {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isRecommendationOpen, setIsRecommendationOpen] = useState(false);
   const [detailDestination, setDetailDestination] = useState<Destination | null>(null);
+
+  // Destination exploration mode
+  const [destinationMode, setDestinationMode] = useState<{
+    destination: Destination;
+    confirmed: boolean;
+  } | null>(null);
+
+  // Avatar guide
+  const [avatarDestination, setAvatarDestination] = useState<Destination | null>(null);
+  const [isAvatarChatOpen, setIsAvatarChatOpen] = useState(false);
 
   // AI tour cursor
   const [aiCursor, setAiCursor] = useState<AICursorState | null>(null);
@@ -172,12 +221,18 @@ export default function App() {
     if (!tourAbortRef.current) {
       await new Promise<void>((r) => setTimeout(r, 400));
       setAiCursor(null);
+      // Leave avatar at the last destination visited
+      const lastStop = script[script.length - 1];
+      const lastDest = lastStop ? destinations.find((d) => d.id === lastStop.destinationId) : null;
+      if (lastDest) setAvatarDestination(lastDest);
     }
   }, []);
 
   const handleAIResponse = useCallback((response: AIResponse) => {
     if (response.suggestedDestinationIds.length > 0) {
       setSuggestedIds(response.suggestedDestinationIds);
+      setSuggestedPrices(response.suggestedPrices ?? {});
+      setSelectedSuggestedId(null); // reset graph selection on new suggestions
       setIsRecommendationOpen(true);
       setDetailDestination(null);
     }
@@ -188,6 +243,27 @@ export default function App() {
       runTour(response.tourScript);
     }
   }, [runTour]);
+
+  const handleSelectSuggestedNode = useCallback((dest: Destination) => {
+    setSelectedSuggestedId(dest.id);
+    setFocusedId(dest.id);
+    setDetailDestination(null);
+    setIsControlsOpen(false);
+    setIsSummaryOpen(false);
+    setIsRecommendationOpen(false);
+    setAvatarDestination(dest);   // move avatar to selected destination
+    setIsAvatarChatOpen(false);   // close chat if open (will reopen on click)
+    setDestinationMode({ destination: dest, confirmed: false });
+  }, []);
+
+  const handleConfirmDestination = useCallback(() => {
+    setDestinationMode((prev) => prev ? { ...prev, confirmed: true } : null);
+  }, []);
+
+  const handleBackFromDestination = useCallback(() => {
+    setDestinationMode(null);
+    setSelectedSuggestedId(null);
+  }, []);
 
   const handleParamsChange = useCallback((partial: Partial<TripParams>) => {
     setTripParams((prev) => ({ ...prev, ...partial }));
@@ -205,6 +281,11 @@ export default function App() {
     ? selectedIds.includes(detailDestination.id)
     : false;
 
+  const confirmedDestination = destinationMode?.confirmed ? destinationMode.destination : null;
+  const activeLocalPlaces: LocalPlace[] = confirmedDestination
+    ? (LOCAL_PLACES[confirmedDestination.id] ?? [])
+    : [];
+
   return (
     <div className="relative w-screen h-screen overflow-hidden font-sans">
       {/* Map layer */}
@@ -212,12 +293,23 @@ export default function App() {
         destinations={destinations}
         selectedIds={selectedIds}
         suggestedIds={suggestedIds}
+        suggestedPrices={suggestedPrices}
+        selectedSuggestedId={selectedSuggestedId}
+        confirmedDestination={confirmedDestination}
+        localPlaces={activeLocalPlaces}
+        avatarDestination={avatarDestination}
+        isAvatarChatOpen={isAvatarChatOpen}
+        tripParams={tripParams}
         focusedId={focusedId}
         mode={mode}
         origin={tripParams.origin}
+        originCoords={getOriginCoords(tripParams.origin)}
         aiCursor={aiCursor}
         onSkipTourStop={handleSkipTourStop}
+        onAvatarChatToggle={() => setIsAvatarChatOpen((o) => !o)}
         onSelectDestination={handleSelectDestination}
+        onSelectSuggestedNode={handleSelectSuggestedNode}
+        onAIResponse={handleAIResponse}
       />
 
       {/* Global archival grain */}
@@ -418,6 +510,16 @@ export default function App() {
         onAddToTrip={handleAddToTrip}
         onRemoveFromTrip={handleRemoveFromTrip}
       />
+
+      {/* ── Destination Explore Panel ─────────────────────────────────────── */}
+      {destinationMode && (
+        <DestinationExplorePanel
+          destination={destinationMode.destination}
+          confirmed={destinationMode.confirmed}
+          onConfirm={handleConfirmDestination}
+          onBack={handleBackFromDestination}
+        />
+      )}
 
       {/* ── Chat Dock ─────────────────────────────────────────────────────── */}
       <ChatDock

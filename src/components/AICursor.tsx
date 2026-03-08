@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, SkipForward } from 'lucide-react';
+import { SkipForward } from 'lucide-react';
 
 // ─── Typewriter hook ─────────────────────────────────────────────────────────
 function useTypewriter(text: string, speed = 22): string {
@@ -26,20 +26,33 @@ function useTypewriter(text: string, speed = 22): string {
   return displayed;
 }
 
-// ─── SVG Cursor element ───────────────────────────────────────────────────────
-// Rendered INSIDE the D3 zoom <g> so it moves with the map.
-interface AICursorSVGProps {
+// ─── Atlas Avatar SVG ─────────────────────────────────────────────────────────
+// Compass-rose avatar — rendered INSIDE the D3 zoom <g> so it moves with the map.
+export interface AvatarSVGProps {
   projX: number;
   projY: number;
-  k: number; // current zoom scale (to counter-scale cursor size)
+  k: number;
+  isNarrating?: boolean;
+  isChatOpen?: boolean;
+  onChatToggle: () => void;
 }
 
-export const AICursorSVG: React.FC<AICursorSVGProps> = ({ projX, projY, k }) => {
-  const r = 14 / k;        // outer pulse radius
-  const rMid = 8 / k;      // middle ring
-  const dot = 3.5 / k;     // center dot
-  const arm = 18 / k;      // crosshair arm length
-  const armGap = 5 / k;    // gap before arm starts
+export const AvatarSVG: React.FC<AvatarSVGProps> = ({
+  projX,
+  projY,
+  k,
+  isNarrating = false,
+  isChatOpen = false,
+  onChatToggle,
+}) => {
+  const [hovered, setHovered] = useState(false);
+
+  const bodyR = 13 / k;
+  const innerR = bodyR * 0.62;
+  const armLen = innerR * 0.85;
+  const pulseR = bodyR * 1.45;
+
+  const accent = isNarrating ? '#C9A84C' : '#2D7A5F';
 
   return (
     <motion.g
@@ -48,62 +61,148 @@ export const AICursorSVG: React.FC<AICursorSVGProps> = ({ projX, projY, k }) => 
         x: { duration: 1.4, ease: [0.22, 1, 0.36, 1] },
         y: { duration: 1.4, ease: [0.22, 1, 0.36, 1] },
       }}
-      style={{ pointerEvents: 'none' }}
+      style={{ cursor: 'pointer' }}
+      onClick={onChatToggle}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       {/* Outer pulsing ring */}
       <motion.circle
-        r={r}
+        r={pulseR}
         fill="none"
-        stroke="#2D7A5F"
-        strokeWidth={1 / k}
-        animate={{ r: [r, r * 1.9, r], opacity: [0.5, 0, 0.5] }}
-        transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-      />
-
-      {/* Second pulsing ring (offset phase) */}
-      <motion.circle
-        r={r * 0.7}
-        fill="none"
-        stroke="#2D7A5F"
+        stroke={accent}
         strokeWidth={0.8 / k}
-        animate={{ r: [r * 0.7, r * 1.5, r * 0.7], opacity: [0.35, 0, 0.35] }}
-        transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut', delay: 0.6 }}
+        animate={{ r: [pulseR, pulseR * 1.9, pulseR], opacity: [0.38, 0, 0.38] }}
+        transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
+        style={{ pointerEvents: 'none' }}
+      />
+      <motion.circle
+        r={pulseR * 0.7}
+        fill="none"
+        stroke={accent}
+        strokeWidth={0.5 / k}
+        animate={{ r: [pulseR * 0.7, pulseR * 1.35, pulseR * 0.7], opacity: [0.25, 0, 0.25] }}
+        transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut', delay: 0.9 }}
+        style={{ pointerEvents: 'none' }}
       />
 
-      {/* Middle solid ring */}
-      <circle r={rMid} fill="none" stroke="#2D7A5F" strokeWidth={1.2 / k} opacity={0.8} />
+      {/* Scale on hover/open */}
+      <motion.g
+        animate={{ scale: hovered || isChatOpen ? 1.13 : 1 }}
+        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+        style={{ transformOrigin: '0px 0px' }}
+      >
+        {/* Shadow */}
+        <circle
+          r={bodyR}
+          fill="#1A1A1A"
+          opacity={0.13}
+          transform={`translate(${1.2 / k}, ${2 / k})`}
+          style={{ pointerEvents: 'none' }}
+        />
 
-      {/* Crosshair arms — N, S, E, W */}
-      {[0, 90, 180, 270].map((deg) => {
-        const rad = (deg * Math.PI) / 180;
-        const x1 = Math.cos(rad) * armGap;
-        const y1 = Math.sin(rad) * armGap;
-        const x2 = Math.cos(rad) * (armGap + arm);
-        const y2 = Math.sin(rad) * (armGap + arm);
-        return (
-          <line
-            key={deg}
-            x1={x1} y1={y1}
-            x2={x2} y2={y2}
-            stroke="#2D7A5F"
-            strokeWidth={1 / k}
-            opacity={0.7}
-            strokeLinecap="round"
+        {/* Main avatar circle */}
+        <circle
+          r={bodyR}
+          fill={isChatOpen ? accent : '#F5F2ED'}
+          stroke={accent}
+          strokeWidth={2.5 / k}
+        />
+
+        {/* Inner accent ring */}
+        <circle
+          r={innerR}
+          fill="none"
+          stroke={isChatOpen ? 'rgba(245,242,237,0.45)' : accent}
+          strokeWidth={0.7 / k}
+          opacity={0.45}
+          style={{ pointerEvents: 'none' }}
+        />
+
+        {/* Compass — E/W arm */}
+        <line
+          x1={-armLen} y1={0} x2={armLen} y2={0}
+          stroke={isChatOpen ? '#F5F2ED' : accent}
+          strokeWidth={1.2 / k}
+          strokeLinecap="round"
+          opacity={0.75}
+          style={{ pointerEvents: 'none' }}
+        />
+
+        {/* Compass — S arm */}
+        <line
+          x1={0} y1={0} x2={0} y2={armLen}
+          stroke={isChatOpen ? '#F5F2ED' : accent}
+          strokeWidth={1.2 / k}
+          strokeLinecap="round"
+          opacity={0.75}
+          style={{ pointerEvents: 'none' }}
+        />
+
+        {/* North pointer — filled arrowhead */}
+        <polygon
+          points={`0,${-armLen * 1.25} ${2.8 / k},${-1.5 / k} 0,0 ${-2.8 / k},${-1.5 / k}`}
+          fill={isChatOpen ? '#F5F2ED' : accent}
+          style={{ pointerEvents: 'none' }}
+        />
+
+        {/* Center dot */}
+        <circle
+          r={2.2 / k}
+          fill={isChatOpen ? '#F5F2ED' : '#1A1A1A'}
+          style={{ pointerEvents: 'none' }}
+        />
+      </motion.g>
+
+      {/* "ATLAS" caption below avatar */}
+      <text
+        y={bodyR + 9 / k}
+        textAnchor="middle"
+        fill={accent}
+        fontSize={6 / k}
+        fontFamily="'JetBrains Mono', monospace"
+        fontWeight="700"
+        letterSpacing={1.5 / k}
+        style={{ pointerEvents: 'none', userSelect: 'none' }}
+      >
+        ATLAS
+      </text>
+
+      {/* Hover / open tooltip */}
+      {(hovered || isChatOpen) && (
+        <g
+          transform={`translate(${bodyR + 7 / k}, ${-10 / k})`}
+          style={{ pointerEvents: 'none' }}
+        >
+          <rect
+            x={0} y={-8 / k}
+            width={(isChatOpen ? 52 : 70) / k}
+            height={15 / k}
+            rx={3 / k}
+            fill="#1A1A1A"
+            opacity={0.88}
           />
-        );
-      })}
-
-      {/* Center dot */}
-      <circle r={dot} fill="#F5F2ED" stroke="#2D7A5F" strokeWidth={1 / k} />
-
-      {/* Inner dot */}
-      <circle r={dot * 0.4} fill="#2D7A5F" />
+          <text
+            x={(isChatOpen ? 26 : 35) / k}
+            y={2.5 / k}
+            textAnchor="middle"
+            fill="#F5F2ED"
+            fontSize={7 / k}
+            fontFamily="'JetBrains Mono', monospace"
+            fontWeight="600"
+          >
+            {isChatOpen ? 'close chat' : 'chat with me →'}
+          </text>
+        </g>
+      )}
     </motion.g>
   );
 };
 
+// Backward-compat alias used by existing Map.tsx imports
+export const AICursorSVG = AvatarSVG;
+
 // ─── Narration bubble ────────────────────────────────────────────────────────
-// Rendered as an HTML overlay, positioned using screen-space coordinates.
 interface NarrationBubbleProps {
   narration: string;
   isVisible: boolean;
@@ -111,7 +210,7 @@ interface NarrationBubbleProps {
   screenY: number;
   screenW: number;
   screenH: number;
-  stopIndex: number;      // 0-based
+  stopIndex: number;
   totalStops: number;
   destinationName: string;
   onSkip: () => void;
@@ -131,22 +230,18 @@ export const NarrationBubble: React.FC<NarrationBubbleProps> = ({
 }) => {
   const displayed = useTypewriter(isVisible ? narration : '', 20);
 
-  // Bubble is 320px wide, ~160px tall
   const BUBBLE_W = 336;
   const BUBBLE_H = 170;
-  const OFFSET_Y = 46; // distance from cursor centre to bubble edge
+  const OFFSET_Y = 48;
 
-  // Decide whether to place above or below the cursor
   const placeAbove = screenY > screenH * 0.55;
   const rawLeft = screenX - BUBBLE_W / 2;
   const rawTop = placeAbove ? screenY - BUBBLE_H - OFFSET_Y : screenY + OFFSET_Y;
 
-  // Clamp to viewport
   const left = Math.max(12, Math.min(rawLeft, screenW - BUBBLE_W - 12));
   const top = Math.max(12, Math.min(rawTop, screenH - BUBBLE_H - 12));
 
-  // Tail direction class
-  const tailAbove = !placeAbove; // tail points up when bubble is below cursor
+  const tailAbove = !placeAbove;
 
   return (
     <AnimatePresence>
@@ -159,7 +254,6 @@ export const NarrationBubble: React.FC<NarrationBubbleProps> = ({
           transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           style={{ position: 'fixed', left, top, width: BUBBLE_W, zIndex: 60 }}
         >
-          {/* Tail pointer */}
           <div
             className={`absolute left-1/2 -translate-x-1/2 w-0 h-0 ${
               tailAbove
@@ -168,27 +262,20 @@ export const NarrationBubble: React.FC<NarrationBubbleProps> = ({
             }`}
             style={{ filter: 'drop-shadow(0 -1px 0 rgba(26,26,26,0.08))' }}
           />
-
-          {/* Card */}
           <div
             className="bg-parchment border border-ink/10 shadow-2xl rounded-xl overflow-hidden"
-            style={{ boxShadow: '0 8px 40px rgba(26,26,26,0.18), 0 1px 0 rgba(26,26,26,0.06)' }}
+            style={{ boxShadow: '0 8px 40px rgba(26,26,26,0.18)' }}
           >
-            {/* Header */}
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-ink/[0.06] bg-ink/[0.02]">
               <div className="flex items-center gap-2">
-                <motion.div
-                  animate={{ rotate: [0, 20, -20, 0] }}
-                  transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut', repeatDelay: 1.5 }}
-                >
-                  <Sparkles size={12} className="text-emerald" />
-                </motion.div>
+                <div className="w-4 h-4 rounded-full bg-emerald/15 border border-emerald/30 flex items-center justify-center">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald" />
+                </div>
                 <span className="font-mono text-[8px] uppercase tracking-[0.2em] text-ink/50">
                   Atlas · Touring
                 </span>
               </div>
               <div className="flex items-center gap-2.5">
-                {/* Stop counter */}
                 <div className="flex items-center gap-1">
                   {Array.from({ length: totalStops }).map((_, i) => (
                     <div
@@ -203,7 +290,6 @@ export const NarrationBubble: React.FC<NarrationBubbleProps> = ({
                     />
                   ))}
                 </div>
-                {/* Skip button */}
                 <button
                   onClick={onSkip}
                   className="flex items-center gap-1 text-ink/35 hover:text-ink/70 transition-colors"
@@ -213,8 +299,6 @@ export const NarrationBubble: React.FC<NarrationBubbleProps> = ({
                 </button>
               </div>
             </div>
-
-            {/* Destination name */}
             <div className="px-4 pt-3 pb-1">
               <div className="flex items-center gap-1.5 mb-1.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald flex-shrink-0" />
@@ -222,11 +306,8 @@ export const NarrationBubble: React.FC<NarrationBubbleProps> = ({
                   {destinationName}
                 </span>
               </div>
-
-              {/* Narration text with typewriter */}
               <p className="font-sans text-[12.5px] leading-relaxed text-ink/70 min-h-[3.5rem]">
                 {displayed}
-                {/* Blinking cursor while typing */}
                 {displayed.length < narration.length && (
                   <motion.span
                     animate={{ opacity: [1, 0, 1] }}
@@ -236,14 +317,12 @@ export const NarrationBubble: React.FC<NarrationBubbleProps> = ({
                 )}
               </p>
             </div>
-
-            {/* Footer */}
             <div className="px-4 pb-3 pt-1 flex items-center justify-between">
               <span className="font-mono text-[8px] uppercase tracking-widest text-ink/25">
                 {stopIndex + 1} of {totalStops}
               </span>
               <span className="font-mono text-[8px] text-ink/25">
-                Press skip to advance →
+                skip to advance →
               </span>
             </div>
           </div>

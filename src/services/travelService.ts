@@ -37,6 +37,7 @@ export interface TourStop {
 export interface AIResponse {
   assistantResponse: string;
   suggestedDestinationIds: string[];
+  suggestedPrices: Record<string, number>; // destinationId -> estimated round-trip price USD
   updatedParams: Partial<TripParams>;
   tourScript: TourStop[];
 }
@@ -61,6 +62,7 @@ You MUST ALWAYS respond with a valid JSON object exactly matching this structure
 {
   "assistantResponse": "Your conversational response shown in the chat. 1-3 sentences. Bold destination names with **name**.",
   "suggestedDestinationIds": ["id1", "id2", "id3"],
+  "suggestedPrices": {"id1": 450, "id2": 720, "id3": 380},
   "updatedParams": {
     "budget": 2500,
     "duration": 10,
@@ -78,6 +80,7 @@ You MUST ALWAYS respond with a valid JSON object exactly matching this structure
 RULES:
 - assistantResponse: ALWAYS required, NEVER empty. Friendly summary of what Atlas is showing.
 - suggestedDestinationIds: 2-5 destination IDs from the list that match the request. Return [] only for purely conversational messages.
+- suggestedPrices: For each suggested destination, include an estimated round-trip economy airfare from the user's origin city in USD (integer). Use realistic 2024 price ranges. Return {} for conversational messages.
 - updatedParams: ONLY include fields explicitly mentioned by the user. Return {} if nothing changed.
 - tourScript: When suggesting destinations, ALWAYS include a tourScript entry for EACH suggestedDestinationId (same order). The narration should feel like a knowledgeable friend leaning over a map and pointing — warm, specific, never generic brochure-speak. 1-3 sentences max. Include ONE concrete practical fact (cost, flight time, best season, crowd tip). Return [] only for conversational messages with no destination suggestions.
 - budget is an integer in USD (total trip budget)
@@ -91,13 +94,15 @@ IMPORTANT: Return ONLY the JSON object. No markdown fences, no extra text.`;
 export async function sendChatMessage(
   message: string,
   history: ChatMessage[],
-  currentParams: TripParams
+  currentParams: TripParams,
+  locationContext?: string
 ): Promise<AIResponse> {
   if (!API_KEY) {
     return {
       assistantResponse:
         'Atlas requires a Gemini API key to operate. Please add your GEMINI_API_KEY to the environment configuration.',
       suggestedDestinationIds: [],
+      suggestedPrices: {},
       updatedParams: {},
       tourScript: [],
     };
@@ -109,7 +114,8 @@ export async function sendChatMessage(
     parts: [{ text: msg.content }],
   }));
 
-  const contextPrefix = `[Current trip parameters: Origin="${currentParams.origin || 'Not set'}", Budget=$${currentParams.budget}, Duration=${currentParams.duration} days, Season=${currentParams.season}]\n\nUser message: ${message}`;
+  const locationStr = locationContext ? `\nCurrently viewing: ${locationContext}` : '';
+  const contextPrefix = `[Current trip parameters: Origin="${currentParams.origin || 'Not set'}", Budget=$${currentParams.budget}, Duration=${currentParams.duration} days, Season=${currentParams.season}${locationStr}]\n\nUser message: ${message}`;
 
   const allContents: Content[] = [
     ...geminiHistory,
@@ -152,6 +158,14 @@ export async function sendChatMessage(
       suggestedDestinationIds: Array.isArray(parsed.suggestedDestinationIds)
         ? parsed.suggestedDestinationIds.filter((id) => validIds.has(id))
         : [],
+      suggestedPrices:
+        parsed.suggestedPrices && typeof parsed.suggestedPrices === 'object'
+          ? Object.fromEntries(
+              Object.entries(parsed.suggestedPrices)
+                .filter(([id, v]) => validIds.has(id) && typeof v === 'number')
+                .map(([id, v]) => [id, Math.round(v as number)])
+            )
+          : {},
       updatedParams:
         parsed.updatedParams && typeof parsed.updatedParams === 'object'
           ? parsed.updatedParams
@@ -172,6 +186,7 @@ export async function sendChatMessage(
       assistantResponse:
         "The signal was lost somewhere over the Atlantic. Try again — Atlas never gives up on finding you the perfect journey.",
       suggestedDestinationIds: [],
+      suggestedPrices: {},
       updatedParams: {},
       tourScript: [],
     };
