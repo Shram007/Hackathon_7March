@@ -6,7 +6,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, ChevronDown, Sparkles, Loader2, X, Lightbulb } from 'lucide-react';
-import { ChatMessage, TripParams, AIResponse, sendChatMessage, getQuickSuggestions, AVAILABLE_GEMINI_MODELS } from '../services/travelService';
+import { ChatMessage, TripParams, AIResponse, sendChatMessage, getQuickSuggestions, AVAILABLE_GEMINI_MODELS, AVAILABLE_GMI_MODELS } from '../services/travelService';
 
 interface ChatDockProps {
   tripParams: TripParams;
@@ -296,11 +296,20 @@ export const ChatDock: React.FC<ChatDockProps> = ({
                         disabled={isThinking}
                         className="w-full md:w-auto bg-ink/[0.04] border border-ink/[0.08] rounded-md px-2 py-1 text-[11px] font-mono text-ink/70 outline-none disabled:opacity-50"
                       >
-                        {AVAILABLE_GEMINI_MODELS.map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
+                        <optgroup label="Gemini (Google)">
+                          {AVAILABLE_GEMINI_MODELS.map((model) => (
+                            <option key={model} value={model}>
+                              {model}
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="GMI Cloud">
+                          {AVAILABLE_GMI_MODELS.map((model) => (
+                            <option key={model} value={model}>
+                              {model}
+                            </option>
+                          ))}
+                        </optgroup>
                       </select>
                     </div>
                     <textarea

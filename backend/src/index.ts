@@ -1,12 +1,13 @@
 /**
  * backend/src/index.ts
  * Entry point for the Wandr backend server.
- * Serves as the integration hub for Exa search and future backend capabilities.
+ * Serves as the integration hub for Exa search and GMI Cloud LLM inference.
  */
 
 import 'dotenv/config';
 import express from 'express';
 import { searchTravelContext } from './exa/exaService.js';
+import { callGmiChat, GMI_MODELS } from './gmi/gmiService.js';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -19,6 +20,7 @@ app.get('/health', (_req, res) => {
     status: 'ok',
     service: 'wandr-backend',
     exa: !!process.env.EXA_API_KEY && process.env.EXA_API_KEY !== 'MY_EXA_API_KEY',
+    gmi: !!process.env.GMI_CLOUD_API_KEY && process.env.GMI_CLOUD_API_KEY !== 'YOUR_GMI_CLOUD_API_KEY',
   });
 });
 
@@ -49,9 +51,40 @@ app.post('/api/exa/context', async (req, res) => {
   }
 });
 
+// GMI Cloud chat route — authenticated proxy to https://api.gmi-serving.com/v1
+// The frontend builds the full OpenAI-format messages array and sends it here
+// so the GMI_CLOUD_API_KEY is never exposed to the browser.
+app.post('/api/gmi/chat', async (req, res) => {
+  try {
+    const messages = req.body?.messages;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'messages array is required' });
+    }
+
+    const model = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+    if (!model) {
+      return res.status(400).json({ error: 'model is required' });
+    }
+
+    if (!(GMI_MODELS as readonly string[]).includes(model)) {
+      return res
+        .status(400)
+        .json({ error: `Unsupported model "${model}". Available: ${GMI_MODELS.join(', ')}` });
+    }
+
+    const result = await callGmiChat({ messages, model });
+    return res.json(result);
+  } catch (error) {
+    console.error('GMI Cloud chat route error:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return res.status(500).json({ error: `GMI Cloud request failed: ${message}` });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Wandr backend running on http://localhost:${PORT}`);
-  console.log(`   Exa API key: ${process.env.EXA_API_KEY ? '✅ loaded' : '❌ missing (add to backend/.env)'}`);
+  console.log(`   Exa API key:       ${process.env.EXA_API_KEY ? '✅ loaded' : '❌ missing (add to backend/.env)'}`);
+  console.log(`   GMI Cloud API key: ${process.env.GMI_CLOUD_API_KEY ? '✅ loaded' : '⚠️ missing (optional — needed for GMI Cloud models)'}`);
 });
 
 export default app;
