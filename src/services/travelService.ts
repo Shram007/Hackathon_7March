@@ -16,7 +16,27 @@ export const AVAILABLE_GEMINI_MODELS = [
 
 export type GeminiModel = (typeof AVAILABLE_GEMINI_MODELS)[number];
 
-function resolveModel(model?: string): GeminiModel {
+/** GMI Cloud model identifiers (routed via backend /api/gmi/chat). */
+export const AVAILABLE_GMI_MODELS = [
+  'deepseek-ai/DeepSeek-R1',
+  'meta-llama/Meta-Llama-3.3-70B-Instruct',
+  'Qwen/Qwen2.5-72B-Instruct',
+] as const;
+
+export type GmiModel = (typeof AVAILABLE_GMI_MODELS)[number];
+
+/** Combined list of all available models shown in the model picker. */
+export const AVAILABLE_MODELS: readonly string[] = [
+  ...AVAILABLE_GEMINI_MODELS,
+  ...AVAILABLE_GMI_MODELS,
+];
+
+/** Returns true when the selected model should be routed to GMI Cloud. */
+export function isGmiModel(model: string): model is GmiModel {
+  return (AVAILABLE_GMI_MODELS as readonly string[]).includes(model);
+}
+
+function resolveGeminiModel(model?: string): GeminiModel {
   return AVAILABLE_GEMINI_MODELS.includes(model as GeminiModel)
     ? (model as GeminiModel)
     : 'gemini-2.5-pro';
@@ -167,6 +187,11 @@ export async function sendChatMessage(
   currentParams: TripParams,
   selectedModel?: string
 ): Promise<AIResponse> {
+  // Route to GMI Cloud if a GMI model is selected
+  if (selectedModel && isGmiModel(selectedModel)) {
+    return sendGmiCloudMessage(message, history, currentParams, selectedModel);
+  }
+
   if (!API_KEY) {
     return {
       assistantResponse:
@@ -196,7 +221,7 @@ export async function sendChatMessage(
 
   try {
     const client = getAI();
-    const modelToUse = resolveModel(selectedModel);
+    const modelToUse = resolveGeminiModel(selectedModel);
     const response = await client.models.generateContent({
       model: modelToUse,
       contents: allContents,
@@ -286,4 +311,108 @@ export function getQuickSuggestions(): string[] {
     'Budget travel in Southeast Asia',
     'Where should I go for 10 days in fall?',
   ];
+}
+
+// ── GMI Cloud path ───────────────────────────────────────────────────────────
+
+/**
+ * Send a chat message via the backend GMI Cloud proxy (/api/gmi/chat).
+ * The backend authenticates with the GMI Cloud API using GMI_CLOUD_API_KEY
+ * so that key is never exposed in the browser bundle.
+ */
+async function sendGmiCloudMessage(
+  message: string,
+  history: ChatMessage[],
+  currentParams: TripParams,
+  model: string
+): Promise<AIResponse> {
+  const contextPrefix =
+    `[Current trip parameters: Origin="${currentParams.origin || 'Not set'}", ` +
+    `Budget=$${currentParams.budget}, Duration=${currentParams.duration} days, ` +
+    `Season=${currentParams.season}]\n\nUser message: ${message}`;
+
+  // Build OpenAI-format messages array: system prompt + conversation history + new user message
+  const messages = [
+    { role: 'system' as const, content: SYSTEM_PROMPT },
+    ...history.slice(-12).map((msg) => ({
+      role: msg.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: msg.content,
+    })),
+    { role: 'user' as const, content: contextPrefix },
+  ];
+
+  try {
+    const resp = await fetch('/api/gmi/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, model }),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(errBody?.error ?? `Backend returned ${resp.status}`);
+    }
+
+    const data = (await resp.json()) as { content?: string };
+    const raw = (data.content ?? '').trim();
+
+    // Extract the outermost JSON object
+    let jsonText = raw;
+    const firstBrace = raw.indexOf('{');
+    const lastBrace = raw.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+      jsonText = raw.substring(firstBrace, lastBrace + 1);
+    }
+
+    let parsed: any = {};
+    try {
+      if (!jsonText) throw new Error('Empty GMI Cloud response');
+      parsed = JSON.parse(jsonText);
+    } catch (parseError) {
+      console.error('Failed to parse GMI Cloud response JSON:', jsonText);
+      throw new Error('Invalid JSON response from GMI Cloud');
+    }
+
+    const validIds = new Set(destinations.map((d) => d.id));
+    return {
+      assistantResponse:
+        typeof parsed.assistantResponse === 'string' && parsed.assistantResponse.length > 0
+          ? parsed.assistantResponse
+          : 'I found some great options for you. Explore the highlighted destinations on the map.',
+      suggestedDestinationIds: Array.isArray(parsed.suggestedDestinationIds)
+        ? parsed.suggestedDestinationIds.filter((id: unknown) => validIds.has(id as string)).slice(0, 4)
+        : [],
+      suggestedPrices:
+        parsed.suggestedPrices && typeof parsed.suggestedPrices === 'object'
+          ? Object.fromEntries(
+              Object.entries(parsed.suggestedPrices)
+                .filter(([id, v]) => validIds.has(id) && typeof v === 'number')
+                .map(([id, v]) => [id, Math.round(v as number)])
+            )
+          : {},
+      updatedParams:
+        parsed.updatedParams && typeof parsed.updatedParams === 'object'
+          ? parsed.updatedParams
+          : {},
+      tourScript: Array.isArray(parsed.tourScript)
+        ? parsed.tourScript.filter(
+            (s): s is TourStop =>
+              s &&
+              typeof s.destinationId === 'string' &&
+              validIds.has(s.destinationId) &&
+              typeof s.narration === 'string'
+          )
+        : [],
+    };
+  } catch (error) {
+    console.error('GMI Cloud error:', error);
+    return {
+      assistantResponse:
+        "The GMI Cloud signal dropped somewhere over the horizon. Check your GMI_CLOUD_API_KEY or try a different model.",
+      suggestedDestinationIds: [],
+      suggestedPrices: {},
+      updatedParams: {},
+      tourScript: [],
+    };
+  }
 }

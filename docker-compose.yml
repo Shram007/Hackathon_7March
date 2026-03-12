@@ -4,6 +4,7 @@
 # Requires a .env file in the project root with:
 #   GEMINI_API_KEY=...
 #   EXA_API_KEY=...
+#   GMI_CLOUD_API_KEY=...   (optional — enables GMI Cloud LLM models)
 
 services:
   backend:
