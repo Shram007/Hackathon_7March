@@ -47,7 +47,10 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
 }) => {
   const [hovered, setHovered] = useState(false);
 
-  const bodyR = 13 / k;
+  // Safety check for zoom scale k
+  const safeK = (typeof k === 'number' && k > 0) ? k : 1;
+
+  const bodyR = 13 / safeK;
   const innerR = bodyR * 0.62;
   const armLen = innerR * 0.85;
   const pulseR = bodyR * 1.45;
@@ -71,7 +74,7 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
         r={pulseR}
         fill="none"
         stroke={accent}
-        strokeWidth={0.8 / k}
+        strokeWidth={0.8 / safeK}
         animate={{ r: [pulseR, pulseR * 1.9, pulseR], opacity: [0.38, 0, 0.38] }}
         transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
         style={{ pointerEvents: 'none' }}
@@ -97,7 +100,7 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
           r={bodyR}
           fill="#1A1A1A"
           opacity={0.13}
-          transform={`translate(${1.2 / k}, ${2 / k})`}
+          transform={`translate(${1.2 / safeK}, ${2 / safeK})`}
           style={{ pointerEvents: 'none' }}
         />
 
@@ -106,7 +109,7 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
           r={bodyR}
           fill={isChatOpen ? accent : '#F5F2ED'}
           stroke={accent}
-          strokeWidth={2.5 / k}
+          strokeWidth={2.5 / safeK}
         />
 
         {/* Inner accent ring */}
@@ -114,7 +117,7 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
           r={innerR}
           fill="none"
           stroke={isChatOpen ? 'rgba(245,242,237,0.45)' : accent}
-          strokeWidth={0.7 / k}
+          strokeWidth={0.7 / safeK}
           opacity={0.45}
           style={{ pointerEvents: 'none' }}
         />
@@ -123,7 +126,7 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
         <line
           x1={-armLen} y1={0} x2={armLen} y2={0}
           stroke={isChatOpen ? '#F5F2ED' : accent}
-          strokeWidth={1.2 / k}
+          strokeWidth={1.2 / safeK}
           strokeLinecap="round"
           opacity={0.75}
           style={{ pointerEvents: 'none' }}
@@ -133,7 +136,7 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
         <line
           x1={0} y1={0} x2={0} y2={armLen}
           stroke={isChatOpen ? '#F5F2ED' : accent}
-          strokeWidth={1.2 / k}
+          strokeWidth={1.2 / safeK}
           strokeLinecap="round"
           opacity={0.75}
           style={{ pointerEvents: 'none' }}
@@ -141,14 +144,14 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
 
         {/* North pointer — filled arrowhead */}
         <polygon
-          points={`0,${-armLen * 1.25} ${2.8 / k},${-1.5 / k} 0,0 ${-2.8 / k},${-1.5 / k}`}
+          points={`0,${-armLen * 1.25} ${2.8 / safeK},${-1.5 / safeK} 0,0 ${-2.8 / safeK},${-1.5 / safeK}`}
           fill={isChatOpen ? '#F5F2ED' : accent}
           style={{ pointerEvents: 'none' }}
         />
 
         {/* Center dot */}
         <circle
-          r={2.2 / k}
+          r={2.2 / safeK}
           fill={isChatOpen ? '#F5F2ED' : '#1A1A1A'}
           style={{ pointerEvents: 'none' }}
         />
@@ -156,13 +159,13 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
 
       {/* "ATLAS" caption below avatar */}
       <text
-        y={bodyR + 9 / k}
+        y={bodyR + 9 / safeK}
         textAnchor="middle"
         fill={accent}
-        fontSize={6 / k}
+        fontSize={6 / safeK}
         fontFamily="'JetBrains Mono', monospace"
         fontWeight="700"
-        letterSpacing={1.5 / k}
+        letterSpacing={1.5 / safeK}
         style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
         ATLAS
@@ -171,23 +174,23 @@ export const AvatarSVG: React.FC<AvatarSVGProps> = ({
       {/* Hover / open tooltip */}
       {(hovered || isChatOpen) && (
         <g
-          transform={`translate(${bodyR + 7 / k}, ${-10 / k})`}
+          transform={`translate(${bodyR + 7 / safeK}, ${-10 / safeK})`}
           style={{ pointerEvents: 'none' }}
         >
           <rect
-            x={0} y={-8 / k}
-            width={(isChatOpen ? 52 : 70) / k}
-            height={15 / k}
-            rx={3 / k}
+            x={0} y={-8 / safeK}
+            width={(isChatOpen ? 52 : 70) / safeK}
+            height={15 / safeK}
+            rx={3 / safeK}
             fill="#1A1A1A"
             opacity={0.88}
           />
           <text
-            x={(isChatOpen ? 26 : 35) / k}
-            y={2.5 / k}
+            x={(isChatOpen ? 26 : 35) / safeK}
+            y={2.5 / safeK}
             textAnchor="middle"
             fill="#F5F2ED"
-            fontSize={7 / k}
+            fontSize={7 / safeK}
             fontFamily="'JetBrains Mono', monospace"
             fontWeight="600"
           >

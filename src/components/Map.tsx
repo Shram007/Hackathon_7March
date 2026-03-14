@@ -264,7 +264,8 @@ export const Map: React.FC<MapProps> = ({
     [dims, projection, onSelectSuggestedNode]
   );
 
-  const k = zoom.k;
+  // Safety check for zoom scale k to prevent NaN/Infinity in calculations.
+  const k = (typeof zoom.k === 'number' && zoom.k > 0) ? zoom.k : 1;
 
   // Avatar position — during tour use aiCursor.destination, else avatarDestination, else origin
   const avatarActiveDest = aiCursor?.destination ?? avatarDestination ?? null;
@@ -456,7 +457,8 @@ export const Map: React.FC<MapProps> = ({
             const showLabel = isHovered || isSelected || isFocused || isSuggestedFocus;
             const price = suggestedPrices[dest.id];
 
-            const r = (isHovered || isFocused ? 6 : isSelected || isSuggestedFocus ? 5.8 : isSuggested ? 5.2 : 4) / k;
+            const rVal = (isHovered || isFocused ? 6 : isSelected || isSuggestedFocus ? 5.8 : isSuggested ? 5.2 : 4);
+            const r = (typeof rVal === 'number' && isFinite(rVal)) ? rVal / k : 4 / k;
 
             return (
               <g
